@@ -4,9 +4,12 @@ import (
 	"github.com/codegangsta/negroni"
 	"github.com/julienschmidt/httprouter"
 	"github.com/nbio/httpcontext"
+	"gopkg.in/tylerb/graceful.v1"
 	"log"
 	"net/http"
+	"os"
 	"strings"
+	"time"
 )
 
 type HandlerType interface{}
@@ -14,11 +17,13 @@ type HandlerType interface{}
 type Zincir struct {
 	Engine *negroni.Negroni
 	Router *httprouter.Router
+	logger *log.Logger
 }
 
 func New() *Zincir {
 	var zincir = new(Zincir)
 	zincir.Engine = negroni.New()
+	zincir.logger = log.New(os.Stdout, "[zincir] ", 0)
 	return zincir
 }
 
@@ -100,7 +105,13 @@ func (z *Zincir) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 }
 
 func (z *Zincir) Run(addr string) {
-	z.Engine.Run(addr)
+	z.logger.Printf("listening on %s", addr)
+	z.logger.Fatal(http.ListenAndServe(addr, z))
+}
+
+func (z *Zincir) RunGraceful(addr string) {
+	z.logger.Printf("listening gracefully on %s", addr)
+	graceful.Run(addr, 10*time.Second, z)
 }
 
 func Param(r *http.Request, key string) string {
