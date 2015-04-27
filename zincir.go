@@ -3,7 +3,7 @@ package zincir
 import (
 	"github.com/codegangsta/negroni"
 	"github.com/julienschmidt/httprouter"
-	"github.com/nbio/httpcontext"
+	"github.com/unrolled/render"
 	"gopkg.in/tylerb/graceful.v1"
 	"log"
 	"net/http"
@@ -13,17 +13,20 @@ import (
 )
 
 type HandlerType interface{}
+type NextFunc func()
 
 type Zincir struct {
 	Engine *negroni.Negroni
 	Router *httprouter.Router
 	logger *log.Logger
+	render *render.Render
 }
 
-func New() *Zincir {
+func New(renderOptions ...render.Options) *Zincir {
 	var zincir = new(Zincir)
 	zincir.Engine = negroni.New()
 	zincir.logger = log.New(os.Stdout, "[zincir] ", 0)
+	zincir.render = render.New(renderOptions...)
 	return zincir
 }
 
@@ -33,7 +36,10 @@ func (z *Zincir) Route(method string, path string, handler HandlerType) {
 
 		z.Engine.UseFunc(func(rw http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
 			if handle, p, _ := z.Router.Lookup(r.Method, r.URL.Path); handle != nil {
-				httpcontext.Set(r, "zincir-nextFunc", next)
+				ctx := z.Context(rw, r)
+				ctx.params = p
+				ctx.nextFunc = next
+
 				handle(rw, r, p)
 			} else {
 				next(rw, r)
@@ -41,12 +47,10 @@ func (z *Zincir) Route(method string, path string, handler HandlerType) {
 		})
 	}
 
-	h := Wrap(handler)
+	h := z.Wrap(handler)
 
 	z.Router.Handle(method, path, func(rw http.ResponseWriter, r *http.Request, p httprouter.Params) {
-		nextFunc := httpcontext.Get(r, "zincir-nextFunc").(http.HandlerFunc)
-		httpcontext.Set(r, "zincir-params", p)
-		h.ServeHTTP(rw, r, nextFunc)
+		h.ServeHTTP(rw, r, z.Context(rw, r).nextFunc)
 	})
 }
 
@@ -79,11 +83,11 @@ func (z *Zincir) DELETE(path string, handler HandlerType) {
 }
 
 func (z *Zincir) Use(handler HandlerType) {
-	z.Engine.Use(Wrap(handler))
+	z.Engine.Use(z.Wrap(handler))
 }
 
 func (z *Zincir) Mount(prefix string, handler HandlerType) {
-	h := Wrap(handler)
+	h := z.Wrap(handler)
 
 	z.Engine.UseFunc(func(rw http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
 		if p := strings.TrimPrefix(r.URL.Path, prefix); len(p) < len(r.URL.Path) {
@@ -114,38 +118,45 @@ func (z *Zincir) RunGraceful(addr string) {
 	graceful.Run(addr, 10*time.Second, z)
 }
 
-func Param(r *http.Request, key string) string {
-	if p, ok := httpcontext.GetOk(r, "zincir-params"); ok {
-		if pp, pok := p.(httprouter.Params); pok {
-			return pp.ByName(key)
-		}
+func (z *Zincir) Wrap(h HandlerType) negroni.Handler {
+	switch f := h.(type) {
+	case http.Handler:
+		return negroni.Wrap(f)
+	case negroni.Handler:
+		return f
+	case func(w http.ResponseWriter, r *http.Request):
+		return negroni.Wrap(http.HandlerFunc(f))
+	case func(rw http.ResponseWriter, r *http.Request, next http.HandlerFunc):
+		return negroni.HandlerFunc(f)
+	case func(rw http.ResponseWriter, r *http.Request, next NextFunc):
+		return negroni.HandlerFunc(func(rw http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
+			nf := func() {
+				next(rw, r)
+			}
+
+			f(rw, r, nf)
+		})
+	case func(c *Ctx):
+		return negroni.HandlerFunc(func(rw http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
+			f(z.Context(rw, r))
+			next(rw, r)
+		})
+	case func(c *Ctx, next http.HandlerFunc):
+		return negroni.HandlerFunc(func(rw http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
+			f(z.Context(rw, r), next)
+		})
+	case func(c *Ctx, next NextFunc):
+		return negroni.HandlerFunc(func(rw http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
+			nf := func() {
+				next(rw, r)
+			}
+
+			f(z.Context(rw, r), nf)
+		})
+	default:
+		log.Fatalf("Unexpected handler type: %T", f)
+		panic("Unexpected handler type.")
 	}
-
-	return ""
-}
-
-func SetVar(r *http.Request, key string, value interface{}) {
-	httpcontext.Set(r, "_"+key, value)
-}
-
-func GetVar(r *http.Request, key string) interface{} {
-	return httpcontext.Get(r, key)
-}
-
-func GetVarString(r *http.Request, key string) string {
-	return httpcontext.GetString(r, key)
-}
-
-func GetVarOk(r *http.Request, key string) (interface{}, bool) {
-	return httpcontext.GetOk(r, key)
-}
-
-func DelVar(r *http.Request, key string) {
-	httpcontext.Delete(r, key)
-}
-
-func ClearVars(r *http.Request) {
-	httpcontext.Clear(r)
 }
 
 func NewStatic(dir http.FileSystem) *negroni.Static {
@@ -158,20 +169,4 @@ func NewLogger() *negroni.Logger {
 
 func NewRecovery() *negroni.Recovery {
 	return negroni.NewRecovery()
-}
-
-func Wrap(h HandlerType) negroni.Handler {
-	switch f := h.(type) {
-	case http.Handler:
-		return negroni.Wrap(f)
-	case negroni.Handler:
-		return f
-	case func(w http.ResponseWriter, r *http.Request):
-		return negroni.Wrap(http.HandlerFunc(f))
-	case func(rw http.ResponseWriter, r *http.Request, next http.HandlerFunc):
-		return negroni.HandlerFunc(f)
-	default:
-		log.Fatalf("Unexpected handler type: %T", f)
-		panic("Unexpected handler type.")
-	}
 }
