@@ -14,19 +14,30 @@ import (
 
 type HandlerType interface{}
 type NextFunc func()
+type RenderOptions render.Options
 
-type Zincir struct {
-	Engine *negroni.Negroni
-	Router *httprouter.Router
-	logger *log.Logger
-	Render *render.Render
+type Options struct {
+	Render RenderOptions
 }
 
-func New(renderOptions ...render.Options) *Zincir {
+type Zincir struct {
+	Engine  *negroni.Negroni
+	Router  *httprouter.Router
+	Render  *render.Render
+	logger  *log.Logger
+	options Options
+}
+
+func New(options ...Options) *Zincir {
 	var zincir = new(Zincir)
+
+	if len(options) > 0 {
+		zincir.options = options[0]
+	}
+
 	zincir.Engine = negroni.New()
 	zincir.logger = log.New(os.Stdout, "[zincir] ", 0)
-	zincir.Render = render.New(renderOptions...)
+	zincir.Render = render.New(render.Options(zincir.options.Render))
 	return zincir
 }
 
@@ -152,6 +163,17 @@ func (z *Zincir) Wrap(h HandlerType) negroni.Handler {
 			}
 
 			f(z.Context(rw, r), nf)
+		})
+	case func(http.Handler) http.Handler:
+		nextCaller := http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+			z.Context(rw, r).nextFunc(rw, r)
+		})
+
+		handler := f(nextCaller)
+
+		return negroni.HandlerFunc(func(rw http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
+			z.Context(rw, r).nextFunc = next
+			handler.ServeHTTP(rw, r)
 		})
 	default:
 		log.Fatalf("Unexpected handler type: %T", f)
