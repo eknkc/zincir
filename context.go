@@ -50,27 +50,27 @@ func (c *Ctx) Del(key interface{}) {
 }
 
 func (c *Ctx) Render() *render.Render {
-	return c.engine.render
+	return c.engine.Render
 }
 
 func (c *Ctx) JSON(status int, v interface{}) {
-	c.engine.render.JSON(c.Writer, status, v)
+	c.engine.Render.JSON(c.Writer, status, v)
 }
 
 func (c *Ctx) JSONP(status int, cbname string, v interface{}) {
-	c.engine.render.JSONP(c.Writer, status, cbname, v)
+	c.engine.Render.JSONP(c.Writer, status, cbname, v)
 }
 
 func (c *Ctx) XML(status int, v interface{}) {
-	c.engine.render.XML(c.Writer, status, v)
+	c.engine.Render.XML(c.Writer, status, v)
 }
 
 func (c *Ctx) Data(status int, v []byte) {
-	c.engine.render.Data(c.Writer, status, v)
+	c.engine.Render.Data(c.Writer, status, v)
 }
 
 func (c *Ctx) HTML(status int, name string, binding interface{}, htmlOpt ...render.HTMLOptions) {
-	c.engine.render.HTML(c.Writer, status, name, binding, htmlOpt...)
+	c.engine.Render.HTML(c.Writer, status, name, binding, htmlOpt...)
 }
 
 func makeCtx(z *Zincir, w http.ResponseWriter, r *http.Request) *Ctx {

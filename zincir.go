@@ -19,14 +19,14 @@ type Zincir struct {
 	Engine *negroni.Negroni
 	Router *httprouter.Router
 	logger *log.Logger
-	render *render.Render
+	Render *render.Render
 }
 
 func New(renderOptions ...render.Options) *Zincir {
 	var zincir = new(Zincir)
 	zincir.Engine = negroni.New()
 	zincir.logger = log.New(os.Stdout, "[zincir] ", 0)
-	zincir.render = render.New(renderOptions...)
+	zincir.Render = render.New(renderOptions...)
 	return zincir
 }
 
